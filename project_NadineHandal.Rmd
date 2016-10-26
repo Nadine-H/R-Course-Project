@@ -1,0 +1,534 @@
+---
+title: "Final Project"
+author: "Nadine Handal"
+date: "October 21, 2016"
+output: 
+html_document:
+    toc: true
+    toc_depth: 5
+    fig_width: 5
+    fig_height: 5
+---
+_Collaborators: Praharsha Gowni, Han (Caroline) Shi and Rachita Vaidya_
+
+```{r global_options, include=FALSE} 
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+```{r}
+library(plyr)
+library(ggplot2)
+library(knitr)
+library(scales)
+options(scipen=4)
+```
+
+```{r}
+#import data
+nlsy <- read.csv("http://www.andrew.cmu.edu/user/achoulde/94842/final_project/nlsy97_income/nlsy97new_income.csv", header=TRUE)
+
+#Pull the columns that we're interested in
+income.df <- data.frame()
+income.df <- nlsy["T8976700"] # income
+income.df <- cbind(income.df, nlsy["R0536300"]) # gender
+income.df <- cbind(income.df, nlsy["R1482600"]) # race
+income.df <- cbind(income.df, nlsy["T9132600"]) # industry
+income.df <- cbind(income.df, nlsy["T6657300"]) # highest degree
+income.df <- cbind(income.df, nlsy["Z9050700"]) # jobs after age 20
+income.df <- cbind(income.df, nlsy["E8043100"]) # number of incarcerations
+
+colnames(income.df) <- c("income", "gender", "race", "industry", 
+                         "highest.degree",  
+                         "jobs.after20", "num.incarcerations" )
+
+pre.processing.df <- income.df
+```
+
+```{r}
+#convert missing values to NA
+income.df$income[income.df$income < 0] <- NA
+income.df$jobs.after20[income.df$jobs.after20 < 0] <- NA
+income.df$industry[income.df$industry < 0] <- NA
+income.df$highest.degree[income.df$highest.degree < 0] <- NA
+```
+
+```{r}
+income.df <- transform(income.df, gender = as.factor(mapvalues(gender, c(1,2), c("male", "female"))),
+                                  race = as.factor(mapvalues(race, c(1,2,3,4), c("black", "hispanic", "mixed", "neither"))),
+                                  highest.degree = as.factor(mapvalues(highest.degree, c(0,1,2,3,4,5,6,7), 
+                                                              c("none", "GED", "high.school", "AA", "BA/BS", "MA/MS","PhD", "Prof.degree"))))
+
+industry.codes.range <- c(170:290, 370:490, 570:690, 770, 1070: 3990, 4070: 4590, 
+                          4670: 5790, 5890, 6070: 6390, 6470: 6780, 6870: 7190, 
+                          7270: 7790, 7860: 8470, 8560: 8690, 8770: 9290, 9370: 9590,
+                          9670: 9890, 9950: 9990)
+income.df <- transform(income.df, 
+                      industry = as.factor(mapvalues(industry, industry.codes.range, 
+                                              c(rep("agriculture", (290-170) + 1), 
+                                                rep("mining", (490-370)+1), rep("utilities", (690-570) + 1), 
+                                                "construction", rep("manufacturing", (3990-1070) + 1), rep("wholesale", (4590-4070) + 1),
+                                                rep("retail", (5790-4670) + 1), "arts", rep("transportation", (6390-6070) + 1),
+                                                rep("ICT", (6780-6470) + 1), rep("finance", (7190-6870) + 1), rep("prof.services", (7790-7270) + 1),
+                                                rep("edu.health.social", (8470-7860) + 1), rep("food.services", (8690-8560) + 1), 
+                                                rep("other", (9290-8770) + 1), rep("public.admin", (9590-9370) + 1), rep("militry", (9890-9670) + 1), 
+                                                rep("acs.special.codes", (9990-9950) + 1)))))
+
+# Remove rows with NA values
+complete.income.df <- income.df[complete.cases(income.df),]
+```
+
+## Data Summary
+
+This report discusses the difference in income between men and women base on industry, race, number of jobs held after age 20, crimincal history (measured by number of incarcerations), and highest academic degree earned prior to the academic year 2011/2012.
+
+The total number of the NLSY survey respondonts (after cleaning the data and removing missing answers) is `r nrow(complete.income.df)`, where `r table(complete.income.df$gender)[1]` respondents are females and `r table(complete.income.df$gender)[2]` are males. Respondents are either black, hispanic, mixed or neither. Number of incarceration ranges from `r min(complete.income.df$num.incarcerations)` to `r max(complete.income.df$num.incarcerations)`, number of jobs after age 20 ranges from `r min(complete.income.df$jobs.after20)` to `r max(complete.income.df$jobs.after20)`. Respondents had either no academic degree prior the academic year 2011/2012, GED, high school diploma, associate/junior college (AA), Bachelor's degree (BA, BS), Master's degree (MA, MS), PhD, or professional degree (DDS, JD, MD). Respondents work in `r length(levels(complete.income.df$industry))` industries:
+
+* Agriculture, Forestry and Fisheries (labeled as "agriculture")
+* Mining
+* Utilities
+* Construction
+* Manufacturing
+* Wholesale Trade (labeled as "wholesale")
+* Retail Trade (labeled as "retail")
+* Transportation and Warehousing (labeled as "transportation")
+* Information and Communication (labeled as "ICT")
+* Finance, Insurance, And Real Estate (labeled as "finance")
+* Professional and Related Services (labeled as "prof.services")
+* Educational, Health, And Social Services (labeled as "edu.health.social")
+* Entertainment, Accomodations, And Food Services (labeled as "food.services")
+* Other Services (labeled as "other")
+* Public Administration (labeled as "public.admin")
+* Active Duty Military (labeled as"military")
+* Acs Special Codes (labeled as "acs.special.codes")
+
+### Descriptive Statistics
+#### Central Tendancy
+We summarize the central tenancy of the dataset by graphically exploring the mean income broken down by gender and each of the other five variables through Figures 1-5.
+
+**Figure 1: Mean income broken down by gender and industry**
+```{r}
+income.industry.gender <- aggregate(data = complete.income.df, income ~ industry + gender, mean)
+
+#Reorder industry bars based on order of income
+income.industry.gender <- transform(income.industry.gender, industry=reorder(industry, income))
+
+ggplot(data=income.industry.gender, aes(x=industry, y=income, fill=gender)) +geom_bar(stat="identity", position="dodge", width=0.6) + ylab("Average Income") + xlab("Industry") + guides(fill = guide_legend(title = "Gender")) + theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1))
+```
+
+From the figure above, we note that in all industries, men tend to get higher salaries than women. The difference in income between men and women seems to be less in wolesale and construction.
+
+**Figure 2: Mean income broken down by gender and race**
+```{r}
+income.race.gender <- aggregate(data = complete.income.df, income ~ race + gender, mean)
+
+#Reorder race bars based on order of income
+income.race.gender <- transform(income.race.gender, race=reorder(race, income))
+
+ggplot(data=income.race.gender, aes(x=race, y=income, fill=gender)) +geom_bar(stat="identity", position="dodge",width=0.6) + ylab("Average Income") + xlab("Race") + guides(fill = guide_legend(title = "Gender")) + theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1))
+```
+
+While income does differ from race to race, it is always higher for men than for women regardless of the race. Though, for black people the difference in income between men and women is relatively smaller.
+
+**Figure 3: Mean income broken down by gender and number of jobs after 20**
+```{r, fig.width=15, fig.height=8}
+income.jobs.gender <- aggregate(data = complete.income.df, income ~ jobs.after20 + gender, mean)
+
+ggplot(data=income.jobs.gender, aes(x=jobs.after20, y=income, fill=gender)) +geom_bar(stat="identity", position = "dodge", width=0.9) + ylab("Average Income") + xlab("Number of jobs after 20") + guides(fill = guide_legend(title = "Gender")) + scale_x_continuous(breaks=income.jobs.gender$jobs.after20) + theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1))
+```
+
+Income seems to be the highest for people who had zero jobs after age 20, but this is meaningless since nobody earns an income without a job, so there is doubt here as how people answered those two questions. Generally, average income tends to decrease as the number of jobs increases. 
+Women's avergae income tends to exceed that for men when number of jobs after 20 is 14. The difference in income also seems to shrink when number of jobs is 15-18 (except for 17 where we see a sudden decrease in women's income).
+
+**Figure 4: Mean income broken down by gender and number of incarcerations**
+```{r}
+income.jail.gender <- aggregate(data = complete.income.df, income ~ num.incarcerations + gender, mean)
+
+ggplot(data=income.jail.gender, aes(x=num.incarcerations, y=income, fill=gender)) +geom_bar(stat="identity", position="dodge", width=0.7) + ylab("Average Income") + xlab("Number of incarcerations") + guides(fill = guide_legend(title = "Gender")) + scale_x_continuous(breaks=income.jail.gender$num.incarcerations)
+```
+
+Average income doesn't seem to have any trend based on number of incarcerations. For men who had no incarceration, avergae income is significantly higher than that for women who had no incarceration. Surprisingly, however, women who have commited four incarcerations receive much higher income than men who have commited four incarcerations. The male individual who commited 9 incarcerations earns `r complete.income.df$ income[which(complete.income.df$num.incarcerations==9)]`, the same income that female respondents with 4 incarcerations earn. However, one person doesn't represnt a population so we cannot make conclusions here.
+
+**Figure 5: Mean income broken down by gender and highest academic degree**
+```{r}
+income.degree.gender <- aggregate(data = complete.income.df, income ~ highest.degree + gender, mean)
+
+#Reorder highest.degree bars based on order of income
+income.degree.gender <- transform(income.degree.gender, highest.degree=reorder(highest.degree, income))
+
+ggplot(data=income.degree.gender, aes(x=highest.degree, y=income, fill=gender)) +geom_bar(stat="identity", position="dodge", width=0.6) + ylab("Average Income") + xlab("Highest academic degree") + guides(fill = guide_legend(title = "Gender")) + theme(axis.text.x = element_text(angle = 60, vjust = 1, hjust = 1))
+```
+
+For all academic degrees, men's income appears to be higher than women's income. For those who have a PhD degree, this difference is much smaller.
+
+### Distribution of Respondents (Proportions)
+
+Tables 1-5 show the proportion of female, male respondents and total respondents broken down by each of the five independent variables. This step is essential to understand the distribution of our data set and to know which areas could lead to errors in our inference later.
+
+```{r}
+gender.bin <- as.numeric(ifelse((complete.income.df$gender=="male"), 0, 1))
+income.temp.df <- cbind(complete.income.df, gender.bin)
+```
+
+**Table 1: Proportions of respondents per industry**
+```{r}
+# Proportions of female and male, and total repondents based on industry
+industry.props <- ddply(income.temp.df, .(industry), summarize, 
+                         female.prop = paste0(round(mean(gender.bin)*100, 2), "%"), male.prop = paste0(round((1 - mean(gender.bin))*100, 2), '%'), total=length(industry))
+kable(industry.props, format = "markdown")
+```
+
+There is higher proportion of men than women in agriculture, manufacturing, public administration, transportation, utilities and wholesale. There is even extremely high proportions of men in mining, construction and millitary with very low percentage of women. This small sample size could lead to high standard error in our inference later on. For instance, the percentage of women working in construction is `r round((sum(complete.income.df$gender=="female" & complete.income.df$industry == "construction")/sum(complete.income.df$industry=="construction"))*100, 1)`% of a total of `r with(complete.income.df, sum(industry=="construction"))` which is about `r with(complete.income.df, sum(gender=="female" & industry == "construction"))`. Since this is a small sample, uncertainty is higher. Note also that the percentage of women working in education, health and social services is much higher than that of men. The proportions in the other idustries are close to 50%.
+
+
+**Table 2: Proportions of respondents per race**
+```{r}
+# Proportions of female and male, and total repondents based on race
+race.props <- ddply(income.temp.df, .(race), summarize, 
+                         female.prop = paste0(round(mean(gender.bin)*100, 2), "%"), male.prop = paste0(round((1 - mean(gender.bin))*100, 2), '%'), total=length(race))
+kable(race.props, format = "markdown")
+```
+
+The proportions of men and women for each race are close to 50%, and the total number of respondents per race is high so it's good enough for making inferences.
+
+
+**Table 3: Proportions of respondents per highest academic degree**
+```{r}
+# Proportions of female and male, and total repondents based on highest degree
+highest.degree.props <- ddply(income.temp.df, .(highest.degree), summarize, 
+                         female.prop = paste0(round(mean(gender.bin)*100, 2), "%"), male.prop = paste0(round((1 - mean(gender.bin))*100, 2), '%'), total=length(highest.degree))
+kable(highest.degree.props, format = "markdown")
+```
+
+There tend to be more men with GED or no degree than women. However, there is high percentage of women with a Master's degree and PhD compared to men. It's also important to note that the total number of respondents who have a PhD degree is very small which could lead to higher uncertainty when making inferences.
+
+
+**Table 4: Proportions of respondents per number of jobs after age 20**
+```{r}
+# Proportions of female and male, and total repondents based on number of jobs after 20
+jobs.after20.props <- ddply(income.temp.df, .(jobs.after20), summarize, 
+                         female.prop = paste0(round(mean(gender.bin)*100, 2), "%"), male.prop = paste0(round((1 - mean(gender.bin))*100, 2), '%'), total=length(jobs.after20))
+kable(jobs.after20.props, align=c('l'), format = "markdown")
+```
+
+It may be clearer to see these percentages visually as in Figure 12.
+
+**Figure 12: Percentage of women broken down by number of jobs held after age 20**
+```{r, fig.width=10, fig.heigh=8}
+jobs.after20.props <- ddply(income.temp.df, .(jobs.after20), summarize, 
+                         female.prop = mean(gender.bin), total=length(jobs.after20))
+
+ggplot(jobs.after20.props, aes(x= factor(jobs.after20), fill=132)) + 
+    geom_bar(aes(y = female.prop), stat="identity") + xlab("Number of jobs after 20") + ylab("Percent of females") +
+    geom_text(aes(label = scales::percent(female.prop), y= female.prop), stat= "identity", vjust = -.5) +
+    scale_y_continuous(labels=percent) + guides(fill=FALSE)
+```
+
+Percentage of women who held zero and 20 jobs after age 20 is significantly lower than men. For the remaining number of jobs proprtions of female and men are almost equal. Attention needs to be paid when making inferences for indivduals who had no jobs or more than 20 jobs as these represent a small sample.
+
+
+**Table 5: Proportions of respondents per number of incarcerations**
+```{r}
+# Proportions of female and male, and total repondents based on number of incarcerations
+incarcerations.props <- ddply(income.temp.df, .(num.incarcerations), summarize, 
+                         female.prop = paste0(round(mean(gender.bin)*100, 2), "%"), male.prop = paste0(round((1 - mean(gender.bin))*100, 2), '%'), total=length(num.incarcerations))
+kable(incarcerations.props, align=c('l'), format = "markdown")
+```
+
+Proportions of men and women who had zero and 7 incarcerations is almost equal, whereas more men tend to have between 1-4 incarcerations compared to women. Note the sample size is very small for those who had more between 4-9 incarcerations.
+
+
+
+## Methodology
+This section presents the methodology and approach used to explore and analyze the data set. 
+
+### Missing Data
+In the NLSY survey, missing answers are coded as follows:
+
+* -1: Refused to answer
+* -2: Don't know
+* -3: Invalid skip - invalid answers because some respondents skipped questions that should be answered while others answered questions that they should not have been asked
+* -4: Valid skip - skipped the question because it inapplicable to that individual
+* -5: Non-interview - no answer was provided because respondent was not interviewed (unable to be located, refusal, deceased, etc).
+
+Generally, I didn't find any interesting trend or hidden population from missing answers, so I chose to ignore missing values for all variables. Below is a detailed justification for that:
+
+* For the income, `r sum(pre.processing.df$income==-1)` of the answers are refusal, `r sum(pre.processing.df$income==-2)` are "Don't know", `r sum(pre.processing.df$income==-3)` are invalid skip,  `r sum(pre.processing.df$income==-4)` are valid skip and `r sum(pre.processing.df$income==-5)` are non-interview. People could refuse to answer such a question for privacy reasons "Don't know" answers are a bit confusing as people are expected to know how much they earn. I could guess that people who didn't remember how much they earned the year before might have answered this question as "don't know". Or some people may not know the exact annual income if they earn their salary through by hourly rate, so salary is not fixed per month and per year. Those people represent a small number of the total respondents, so I chose not to include them. Generally, since the missing answers don't reveal any interesting population, I chose to ignore them.
+
+* For the type of industry, `r sum(pre.processing.df$industry==-1)` of the answers are refusal, `r sum(pre.processing.df$industry==-2)` are "Don't know", `r sum(pre.processing.df$industry==-3)` are invalid skip,  `r sum(pre.processing.df$industry==-4)` are valid skip and `r sum(pre.processing.df$industry==-5)` are non-interview. From the survey question description, this question was asked to people who have a valid employer. There are many reasons why some people skipped this question. Either they didn't want to disclose that information if for example they worked in an illegal industry. Some people may also have worked in several industries throughout their life, and since the question doesn't specify whether it's the most recent industry they worked in, they skipped it. Since there are many question marks here, I chose to ignore those values in my analysis.
+
+* For the number of jobs held after age 20 and the highest degree received, the number of missing answers compared to the total number of responses was small and won't affect my study. Number of incarcerations surprisingly had no missing answers.
+
+### Top-coded Values
+Top-coded income values can skew the distribution of data and thus affect negatively on the regression model. To assess the effect of top-coded income values, I built two regression models: one with top-coded income values, and one without them. Figure 13 shows a histogram of the income. Note the extreme points to the right of the histogram, these represent the top-coded (top 2% income) income values.
+
+**Figure 13: Histogram of income**
+
+```{r}
+ggplot(data=complete.income.df, aes(x=income)) + geom_histogram() +  xlab("Income") + ylab("Number of individuals")
+```
+
+It actually appears that these top-coded values do not influence regression as I initially thought. Additionally, none of the models is appropriate for making inferences. In the next section, I will explain in more details how I came to this conclusion.
+
+### Interesting relationships
+One of the interesting relationships that I saw during my analysis is the relationship between income and gender based on the number of jobs after 20. Figure 14 shows that relationship. 
+
+**Figure 14: Relationship between income and gender based on number of jobs held after 20**
+```{r}
+ggplot(data = complete.income.df,
+       aes(x = jobs.after20, y = income, colour = gender, group=gender)) +
+  stat_summary(fun.y=mean, geom="point")+
+  stat_smooth(method = "lm", fullrange=TRUE) +
+  xlab("Number of jobs after age 20") + ylab ("Average income")
+```
+
+As we see from the plot, women who held less than 15 jobs after age 20 earn less than men who had less than 15 jobs. However, when women held more than 15 jobs, they earn more than men! Why do women who have held more jobs during their life than men get higher pay? Is it a causal relationship? Or is there a hidden factor? It could be that this population of women have other characteristics that we haven't discovered yet. 
+
+I tried to analyze this relationship by adding a third factor. When adding the industry, I got the following plots:
+
+**Figure 15: Relationship between income and gender based on number of jobs after age 20, broken down by industry**
+
+```{r, fig.width=10, fig.height=10}
+ ggplot(data = complete.income.df,
+        aes(x = jobs.after20, y = income, colour = gender, group=gender)) +
+        stat_summary(fun.y=mean, geom="point")+
+        stat_smooth(method = "lm", fullrange=TRUE) +
+        xlab("Number of jobs after age 20") + ylab ("Average income") + facet_wrap(~ industry)
+```
+
+```{r}
+industry.totals <- with(complete.income.df, sum(industry=="ICT"|industry=="edu.health.social"|industry=="food.services"|industry=="manufacturing"|industry=="other"|industry=="prof.services"|industry=="utilities"))
+female.prop1 <- with(complete.income.df, sum(gender=="female" & (jobs.after20 > 15) & (industry=="ICT"|industry=="edu.health.social"|industry=="food.services"|industry=="manufacturing"|industry=="other"|industry=="prof.services"|industry=="utilities"))/sum(gender=="female" & (jobs.after20 > 15))) * 100
+
+female.prop2 <- with(complete.income.df, sum(gender=="female" & (jobs.after20 > 15) & (industry=="ICT"|industry=="edu.health.social"|industry=="food.services"|industry=="manufacturing"|industry=="other"|industry=="prof.services"|industry=="utilities"))/sum(gender=="female")) * 100
+                             
+```
+
+In industries of ICT, education, health ans social services, manufacturing, utilities, food, professional and other services, women who held more than 20 jobs after age 20 earn more than men. About `r round(female.prop2, 2)`% of all women work in these industries and `r round(female.prop1, 2)`% of them held more than 15 jobs from age 20. This proportion is small but it does give information about this relationship. More variables need to be taken into consideration like age and professional seniority.
+
+
+### Regression Base Factor Level
+Before building my regression models, I set the base factor level for each factor variable (gender, industry, race, highest degree), to be the level with lowest mean income. This way, it would be easier to interpret the regression coefficients by comparing them to the level with lowest mean income. Based on the lowest factor level from the mean income plots in the previous section, the base level for gender is "female", for industry it's "food.services", for race it's "black" and for highest degree is "none" (no degree received).  
+
+```{r}
+# We set the base level by reordering the levels so that the base is the first one
+# for gender, "female" is the first level alphabetically so it's already the base level
+complete.income.df$industry <- relevel(complete.income.df$industry, "food.services")
+complete.income.df$race <- relevel(complete.income.df$race, "black")
+complete.income.df$highest.degree <- relevel(complete.income.df$highest.degree, "none")
+```
+
+
+### Final Model
+The final model equation looks as follows:
+```
+income ~ gender + industry + race + jobs.after20 + highest.degree + num.incarcerations + highest.degree*gender
+```
+In the model above, each of the following: gender, industry, number of jobs after 20, number of incarcerations, and highest degree as it interacts with gender, significantly affects average income. Highest degree received is the only gender-related variable. 
+
+
+## Findings
+
+In this section, I present two models: Model A which includes the top-coded income values, and Model B which excludes them. For each model, I will explain some of the interesting steps I did in building the model. Finally, I will compare both models using diagnostic plots.
+
+### Model A
+#### Interactions
+Interactions between gender and the other variables are important for our model, since our focus is to find gender-related factors that affect the income. To assess significance of each interaction, I first built a basic model where the predictors are gender, industry, race, number of jobs after 20, number of incarcerations and highest academic degree, then gradually added each interaction term to the model and tested the significance of the model using ANOVA test. Table 6 summarizes the significance of each of these interaction terms. 
+
+**Table 6: Summary of interactions' significance**
+```{r}
+income.simple.lm1 <- lm(income ~ gender + industry + race + highest.degree + jobs.after20 + num.incarcerations, data=complete.income.df)
+
+lm1.interaction1 <- update(income.simple.lm1, . ~ . + industry*gender)
+lm1.interaction1.p.value <- anova(income.simple.lm1, lm1.interaction1)$"Pr(>F)"[2]
+
+lm1.interaction2 <- update(lm1.interaction1, . ~ . + race*gender)
+lm1.interaction2.p.value <- anova(lm1.interaction1, lm1.interaction2)$"Pr(>F)"[2]
+
+lm1.interaction3 <- update(lm1.interaction2, . ~ . + jobs.after20*gender)
+lm1.interaction3.p.value <- anova(lm1.interaction2, lm1.interaction3)$"Pr(>F)"[2]
+
+lm1.interaction4 <- update(lm1.interaction3, . ~ . + highest.degree*gender)
+lm1.interaction4.p.value <- anova(lm1.interaction3, lm1.interaction4)$"Pr(>F)"[2]
+
+lm1.interaction5 <- update(lm1.interaction4, . ~ . + num.incarcerations*gender)
+lm1.interaction5.p.value <- anova(lm1.interaction4, lm1.interaction5)$"Pr(>F)"[2]
+
+interactions.anova.summary <- cbind(round(lm1.interaction1.p.value, 3), round(lm1.interaction2.p.value, 3), round(lm1.interaction3.p.value, 3), round(lm1.interaction4.p.value, 3), round(lm1.interaction5.p.value, 3))
+rownames(interactions.anova.summary) <- "p-value"
+
+kable(interactions.anova.summary, format = "pandoc", col.names = c("industry", "race", "jobs.after20", "highest.degree", "num.incarcerations"))
+```
+
+We notice that race, highest academic degree and number of incarcerations had p-values higher than the significance level (0.05). Hence, these three interactions do not significantly affect the difference in income between men and women. On the other hand, interactions of gender with industry, and gender with number of jobs after 20, have low p-values, which indicates they have signicant effect on the difference. In other words, the income between men and women varies depending on industry and jobs after 20. Note how these results align with our initial predictions in the Data Summary section (Refer back to Figure 1-5). For simplicity, I will include only one interaction term. I would have chosen the most significant interaction which is industry and gender, but since industry has too many levels, the model can be very complex and may be hard to interpret it. Thus, I will only include the second best: interaction between gender and the number of jobs after 20.
+
+
+#### Collinearity
+All independent variables do not reflect any collinearity as each one is independent from the other. So we don't have to remove any variable from the model.
+
+
+#### Regression Model
+Below is the multiple regression model summary:
+```{r}
+lm.a <- update(income.simple.lm1, . ~ . + jobs.after20*gender)
+lm.a.summary <- summary(lm.a)
+
+kable(lm.a.summary$coef, 
+      digits = c(3, 3, 3, 4), format = "pandoc")
+```
+
+We interpret the above model as follows:
+
+* Average men's income is higher than that for women by `r round(abs(lm.a.summary$coefficients["gendermale", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["gendermale", "Std. Error"], 2)`. The p-vaue is very small so this difference is statistically significant.
+* Average income of people who work in Information and Communications industry (ICT) is `r round(abs(lm.a.summary$coefficients["industryICT", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["industryICT", "Std. Error"], 2)` higher than those who work in food services. p-value is `r round(lm.a.summary$coefficients["industryICT", "Pr(>|t|)"], 2)`, so this effect is statistically significant. Also, people who work in agriculture have average income of `r round(abs(lm.a.summary$coefficients["industryagriculture", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["industryagriculture", "Std. Error"], 2)` higher than those who work in food services, however this difference is not statistically significant.
+* People who are neither black nor hispanic, earn an average income of `r round(abs(lm.a.summary$coefficients["raceneither", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["raceneither", "Std. Error"], 2)` higher than black people's income, and this difference is statistically significant.
+* Individuals with a Master's degree earn on average `r round(abs(lm.a.summary$coefficients["highest.degreeMA/MS", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["highest.degreeMA/MS", "Std. Error"], 2)` higher than those with no degree, for a PhD degree the average income is `r round(abs(lm.a.summary$coefficients["highest.degreePhD", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["highest.degreePhD", "Std. Error"], 2)` higher and for a professional degree it's `r round(abs(lm.a.summary$coefficients["highest.degreeProf.degree", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["highest.degreeProf.degree", "Std. Error"], 2)` higher than no academic degree. All of these differences are statistically significant.
+* For every additional incarceration in the individual's criminal history the average income decreases by `r round(abs(lm.a.summary$coefficients["num.incarcerations", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["num.incarcerations", "Std. Error"], 2)`, this difference is also statistically significant.
+* Among male individuals, for every additional job held after age 20 the average income decreases by `r round(abs(lm.a.summary$coefficients["gendermale:jobs.after20", "Estimate"]), 2)` +/- `r round(lm.a.summary$coefficients["gendermale:jobs.after20", "Std. Error"], 2)`, this difference is also statistically significant.
+
+To better understand the interaction between gender and number of jobs after 20, refer to the figure below.
+
+**Figure 16: Relationship between income and gender based on number of jobs held after 20**
+
+```{r}
+ggplot(data = complete.income.df,
+       aes(x = jobs.after20, y = income, colour = gender, group=gender)) +
+  stat_summary(fun.y=mean, geom="point")+
+  stat_smooth(method = "lm", fullrange=TRUE) +
+  xlab("Number of jobs after age 20") + ylab ("Average income")
+```
+
+For number of jobs less than 15, women tend to have lower income than men. However, for number of jobs above 15, the opposite is true. We already mentioned this relationship in the previous section. More investigation needs to be done to truly understand the reason behind such a trend.
+Note the increased error of regression for each gender as the number of jobs increases. This may be due to the smaller samples we have as the number of jobs is higher (Refer back to Table 4 in the Data Summary).
+
+### Model B
+#### Interactions
+We use here the same approach that we used to asses each interaction term's effect on income. Table 7 summarizes the significance of each of these interaction terms. 
+
+**Table 7: Summary of interactions' significance**
+```{r}
+# remove records of people with topcoded income
+unskewed.complete.income.df <- complete.income.df[-which(complete.income.df$income > 150000),]
+
+income.simple.lm2 <- lm(income ~ gender + industry + race + highest.degree + jobs.after20 + num.incarcerations, data=unskewed.complete.income.df)
+
+lm2.interaction1 <- update(income.simple.lm2, . ~ . + industry*gender)
+lm2.interaction1.p.value <- anova(income.simple.lm2, lm2.interaction1)$"Pr(>F)"[2]
+
+lm2.interaction2 <- update(lm2.interaction1, . ~ . + race*gender)
+lm2.interaction2.p.value <- anova(lm2.interaction1, lm2.interaction2)$"Pr(>F)"[2]
+
+lm2.interaction3 <- update(lm2.interaction2, . ~ . + jobs.after20*gender)
+lm2.interaction3.p.value <- anova(lm2.interaction2, lm2.interaction3)$"Pr(>F)"[2]
+
+lm2.interaction4 <- update(lm2.interaction3, . ~ . + highest.degree*gender)
+lm2.interaction4.p.value <- anova(lm2.interaction3, lm2.interaction4)$"Pr(>F)"[2]
+
+lm2.interaction5 <- update(lm2.interaction4, . ~ . + num.incarcerations*gender)
+lm2.interaction5.p.value <- anova(lm2.interaction4, lm2.interaction5)$"Pr(>F)"[2]
+
+interactions.anova.summary <- cbind(round(lm2.interaction1.p.value, 3), round(lm2.interaction2.p.value, 3), round(lm2.interaction3.p.value, 3), round(lm2.interaction4.p.value, 3), round(lm2.interaction5.p.value, 3))
+rownames(interactions.anova.summary) <- "p-value"
+
+kable(interactions.anova.summary, format = "pandoc", col.names = c("industry", "race", "jobs.after20", "highest.degree", "num.incarcerations"))
+```
+
+Interestingly, we see that the significance of the same interactions differ in model B than in model A. Interaction of gender with race, and gender with highest academic degree had insignificant effect on income in model A, whereas we see now that they are both significant! The interaction of industry and gender is still significant, though the p-value is lower now than in model A. As we did in model A, I will only include one interaction term for simplicity purposes. Industry is the most significant gender-related factor here, but since it will complicate the model I will include the second best which is the highest academic degree.
+
+
+#### Regression Model
+```{r}
+lm.b <- update(income.simple.lm2, . ~ . + highest.degree*gender)
+lm.b.summary <- summary(lm.b)
+
+kable(lm.b.summary$coef, 
+      digits = c(3, 3, 3, 4), format = "pandoc")
+```
+
+We interpret the above model as follows:
+
+* Average men's income is higher than that for women by `r round(abs(lm.b.summary$coefficients["gendermale", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["gendermale", "Std. Error"], 2)`. The p-vaue is very small so this difference is statistically significant.
+* Average income of people who work in Information and Communications industry (ICT) is `r round(abs(lm.b.summary$coefficients["industryICT", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["industryICT", "Std. Error"], 2)` higher than those who work in food services. p-value is `r round(lm.b.summary$coefficients["industryICT", "Pr(>|t|)"], 2)`, so this effect is statistically significant. Also, people who work in agriculture have average income of `r round(abs(lm.b.summary$coefficients["industryagriculture", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["industryagriculture", "Std. Error"], 2)` higher than those who work in food services, however this difference is not statistically significant.
+* People who are neither black nor hispanic, earn an average income of `r round(abs(lm.b.summary$coefficients["raceneither", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["raceneither", "Std. Error"], 2)` higher than black people's income, and this difference is statistically significant.
+* Among male individuals, those who have a Master's degree earn on average `r round(abs(lm.b.summary$coefficients["gendermale:highest.degreeMA/MS", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["gendermale:highest.degreeMA/MS", "Std. Error"], 2)` lower than those who don't have any academic degree Also, those who have a PhD degree earn `r round(abs(lm.b.summary$coefficients["gendermale:highest.degreePhD", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["gendermale:highest.degreePhD", "Std. Error"], 2)` lower than those who don't have any degree. People with professional earn an average of `r round(abs(lm.b.summary$coefficients["gendermale:highest.degreeProf.degree", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["gendermale:highest.degreeProf.degree", "Std. Error"], 2)` lower than those with no degree. P-values for all the previously mentioned coefficients is high, thus the effect of them all is not statistically significant.
+* For every additional job held after age 20 the average income decreases by `r round(abs(lm.b.summary$coefficients["jobs.after20", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["jobs.after20", "Std. Error"], 2)`, this difference is also statistically significant.
+* For every additional incarceration in the individuals criminal history the average income decreases by `r round(abs(lm.b.summary$coefficients["num.incarcerations", "Estimate"]), 2)` +/- `r round(lm.b.summary$coefficients["num.incarcerations", "Std. Error"], 2)`, this difference is also statistically significant.
+
+To better understand the interaction between gender and highest degree, refer to the figure below.
+
+**Figure 17: Relationship between income and gender based on highest degree**
+
+```{r}
+#Note: I didn't add the regression lines here as it makes the plot visually not clear. Instead, I plotted lines that connect between the mean income points for male and female for better visualization
+ggplot(data = complete.income.df,
+       aes(x = gender, y = income, colour = highest.degree, group=highest.degree)) +
+  stat_summary(fun.y=mean, geom="point")+
+  stat_summary(fun.y=mean, geom="line", size = 1) + ylab("Average Income") + xlab("Gender")
+```
+
+Since gender is a categorical variable, the lines are meaningless in the plot. They were only added to make the difference in income visually clear. Note the difference in income between female and male for every type of academic degree. For all types of degrees, men's average income is higher. The pink line for professional degree has the highest slope indicating the highest difference in average income between men and women.
+
+### Models Comparison
+
+We now compare model A and model B through diagnostic plots, and try to find whether one is more reliable than the other.
+
+```{r}
+plot(lm.a, which = 1, caption="Model A: Residuals vs Fitted")
+plot(lm.b, which = 1, caption="Model B: Residuals vs Fitted")
+```
+
+Although model A has very high residuals that are far away from the rest of the residuals, both models show a "funneling" phenomenon. The distribution of the residuals is quite well concentrated around 0 for the mid-range of fitted values, but they get more and more spread out as the fitted values decrease below 20000 and increase above 80000. Since this is a clear demonstration of non-constant variance, this violates the assumtion of constant variance for linear regression. Hence, we cannot rely on our inference using these two models.
+
+**Model A**
+
+```{r}
+plot(lm.a, which = 2) # Note: captians for some reason are not appreaing for QQ-plot and the other two plots.
+```
+
+**Model B**
+
+```{r}
+plot(lm.b, which = 2)
+```
+
+The QQ-plot for model A shows significantly heavy tails, indicating that the residuals' distribution is far from normal. Model B seems to have "lighter" heavy tails, but it's also not an appropriate model. Having heavy tails means that our confidence intervals and p-values are too optimistic, therefore, we cannot rely on either of the two models.
+
+**Model A** 
+
+```{r}
+plot(lm.a, which = 3)
+```
+
+**Model B**
+
+```{r}
+plot(lm.b, which = 3)
+```
+
+The Scale-Location plot for both models confirm the non-constant variance that we saw in the Residuals-Fitted model. The "funneling" effect could imply a non-linear relationship.
+
+**Model A**
+
+```{r}
+plot(lm.a, which = 5)
+```
+
+**Model B**
+
+```{r}
+plot(lm.b, which = 5)
+```
+
+Although we initially thought that top-coded values can influence the regression model, it turns out they don't.
+
+Though both models are not appropriate for making inferences, the violation of regression assumptions is less severe in model B. So our final model is model B.
+
+## Discussion
+
+The final regression model predicts the mean income based on gender, industry, number of jobs held after age 20, number of incarcerations, as well as highest degree received depending on gender (interaction). Association between income and all the above terms is highly positive except for the number of jobs held after 20 and number of incarcerations. 
+The model suffers from limitations that make it inappropriate for making inferences:
+
+1.	Doesn't capture the non-constant variance in residuals. This may suggest a non-linear relationship.
+2.	Residuals' distribution is not normal.
+
+The relationship between income and gender based on number of jobs held after 20 is particularly interesting to me. Since the final model doesn't include that interaction, including other independent variables such as age, level of professional seniority, gross family income can possibly affect the significance of this interaction, and help us understand this trend.  
+
